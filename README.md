@@ -1,14 +1,13 @@
-# 🏠 Real Estate Market Modeling with PySpark
+# 🏠 Real Estate Market Modeling 
 
-This project uses a dataset of U.S. county-level real estate market indicators to predict **median sale prices** using **linear regression** and **hyperparameter tuning techniques**. The project is developed and run on **Databricks**, leveraging **Apache Spark** for scalable data processing and machine learning.
-
+The housing market significantly influences economic decision-making for individuals, investors, and policymakers. In this analysis, we examine an extensive real estate dataset (8GB+) supplemented with real-time data from Redfin to uncover patterns and forecast market trends. Leveraging Apache Spark and scalable machine learning pipelines, we apply regression models to predict housing prices, classify buyer behavior, and generate actionable insights. Our findings aim to inform smarter investment strategies, policy decisions, and home-buying choices in an increasingly dynamic market.
 ---
 
 ## 📁 Dataset
 
 - **File**: `county_market_tracker.csv`
-- **Source**: Uploaded to Databricks FileStore (`/FileStore/tables/`)
-- **Size**: ~XX MB (dependent on actual file)
+- **Source**:https://www.kaggle.com/datasets/thuynyle/redfin-housing-market-data​
+- **Size**: ~8.5 GB 
 - **Columns Include**:
   - `median_list_price`
   - `median_ppsf`
@@ -22,7 +21,7 @@ This project uses a dataset of U.S. county-level real estate market indicators t
   - `sold_above_list`
   - `price_drops`
   - `off_market_in_two_weeks`
-  - `median_sale_price` *(target variable)*
+  - `median_sale_price` 
 
 ---
 
@@ -67,44 +66,15 @@ This project uses a dataset of U.S. county-level real estate market indicators t
 
 ## 🔍 Results
 
-| Model                         | RMSE     | R²       |
-|------------------------------|----------|----------|
-| LinearRegression (CV)        | ~X.XX    | ~0.XX    |
-| LinearRegression (TVS)       | ~X.XX    | ~0.XX    |
-
-- **Top Influential Features**:
-  - `median_list_price`
-  - `median_ppsf`
-  - `avg_sale_to_list`
-  - `sold_above_list`
-  - `months_of_supply` (negative influence)
-
----
 
 ## 📈 Visualization
 
 - Feature Importance (via coefficients)
 - Optional scatter plots for individual feature vs. target (e.g., list price vs. sale price)
 
----
 
-## 🚀 How to Run
 
-1. Upload `county_market_tracker.csv` to `/FileStore/tables/` in Databricks
-2. Import the notebook and attach a cluster
-3. Run all cells in order
-4. View model performance and insights
 
----
 
-## 📌 License
 
-This project is intended for educational and research purposes. Please attribute data sources appropriately if reused.
-
----
-
-## ✍️ Author
-
-- Your Name (or GitHub handle)
-- [LinkedIn/GitHub/Portfolio link]
 
