@@ -1,197 +1,116 @@
-# Databricks notebook source
+# Random Forest Regression Pipeline with Logging and Evaluation Tables
 from pyspark.sql import SparkSession
-from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.feature import VectorAssembler, Imputer
 from pyspark.ml.regression import RandomForestRegressor
-from pyspark.ml.feature import Imputer
-from pyspark.sql.functions import col,when
-from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
-import time
+from pyspark.ml.tuning import CrossValidator, ParamGridBuilder, TrainValidationSplit
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.sql.functions import col
 import pandas as pd
-import matplotlib.pyplot as plt
+from tabulate import tabulate
+from datetime import timedelta
+import time
 
-# Start Spark session
+# Initialize Spark Session
 spark = SparkSession.builder \
     .appName("Neighborhood Market Tracker") \
     .getOrCreate()
+spark.sparkContext.setLogLevel("WARN")
 
-# Load data
-# File location and type
+# Load Data
 file_path = "/user/smahesh4/Group5-Project/neighborhood_market_tracker.csv"
-file_type = "csv"
+df = spark.read.option("header", True).option("inferSchema", True).csv(file_path)
 
-# CSV options
-infer_schema = "true"
-first_row_is_header = "true"
-delimiter = ","
-
-# The applied options are for CSV files. For other file types, these will be ignored.
-df = spark.read.format(file_type) \
-  .option("inferSchema", infer_schema) \
-  .option("header", first_row_is_header) \
-  .option("sep", delimiter) \
-  .load(file_path)
-df.show(5)
-df.printSchema()
-
-
-#  Define features and label BEFORE using them
+# Select Features and Label
 feature_cols = ["inventory", "homes_sold", "median_list_price", "median_ppsf"]
 label_col = "median_sale_price"
-# Cast to Double
+
+# Cast and Clean Data
 for c in feature_cols + [label_col]:
-    df = df.withColumn(c, when(col(c).rlike("^[0-9.]+$"), col(c)).otherwise(None).cast("double"))
+    df = df.withColumn(c, col(c).cast("double"))
 
-# Drop null label rows
-df = df.na.drop(subset=[label_col])
+df = df.na.drop(subset=feature_cols + [label_col])
 
-# Impute missing feature values
+# Impute Missing Values
 imputer = Imputer(inputCols=feature_cols, outputCols=feature_cols)
 df = imputer.fit(df).transform(df)
 
-
-# COMMAND ----------
-
-#Feature Importance 
-# Assemble features
+# Assemble Features
 assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
 data = assembler.transform(df).select("features", label_col)
 
-
-# COMMAND ----------
-
-#Train-Test Split
+# Split Data
 train_data, test_data = data.randomSplit([0.8, 0.2], seed=42)
 
+# Define Evaluators
+rmse_evaluator = RegressionEvaluator(labelCol=label_col, predictionCol="prediction", metricName="rmse")
+r2_evaluator = RegressionEvaluator(labelCol=label_col, predictionCol="prediction", metricName="r2")
 
-# COMMAND ----------
+# === Baseline Random Forest (no tuning) ===
+baseline_rf = RandomForestRegressor(labelCol=label_col, featuresCol="features")
+baseline_start = time.time()
+baseline_model = baseline_rf.fit(train_data)
+baseline_end = time.time()
+baseline_time = baseline_end - baseline_start
+baseline_predictions = baseline_model.transform(test_data)
+baseline_rmse = rmse_evaluator.evaluate(baseline_predictions)
+baseline_r2 = r2_evaluator.evaluate(baseline_predictions)
 
-#Model Definition
+# Define Model and Param Grid
 rf = RandomForestRegressor(labelCol=label_col, featuresCol="features")
+param_grid = ParamGridBuilder().addGrid(rf.numTrees, [5]).addGrid(rf.maxDepth, [3]).build()
 
-
-# COMMAND ----------
-
-#Hyperparameter Tuning Grids
-param_grid = ParamGridBuilder() \
-    .addGrid(rf.numTrees, [50]) \
-    .addGrid(rf.maxDepth, [5]) \
-    .build()
-
-
-
-# COMMAND ----------
-
-#. Cross Validation (CV)
-from pyspark.ml.evaluation import RegressionEvaluator
-# Define the evaluator
-evaluator = RegressionEvaluator(
-    labelCol=label_col,
-    predictionCol="prediction",
-    metricName="rmse"
-)
-cv = CrossValidator(
-    estimator=rf,
-    estimatorParamMaps=param_grid,
-    evaluator=evaluator,
-    numFolds=3,
-    parallelism=2
-)
-
-start_time = time.time()
+# === CrossValidator ===
+cv = CrossValidator(estimator=rf, estimatorParamMaps=param_grid, evaluator=rmse_evaluator, numFolds=2, parallelism=1)
+cv_start = time.time()
 cv_model = cv.fit(train_data)
-end_time = time.time()
+cv_end = time.time()
+cv_time = cv_end - cv_start
+cv_predictions = cv_model.transform(test_data)
+cv_rmse = rmse_evaluator.evaluate(cv_predictions)
+cv_r2 = r2_evaluator.evaluate(cv_predictions)
 
-predictions = cv_model.transform(test_data)
-
-
-# COMMAND ----------
-
-#TrainValidationSplit (TVS)
-from pyspark.ml.tuning import TrainValidationSplit
-# Define TrainValidationSplit
-tvs = TrainValidationSplit(
-    estimator=rf,
-    estimatorParamMaps=param_grid,
-    evaluator=evaluator,
-    trainRatio=0.8
-)
-
-
-
-tvs = TrainValidationSplit(
-    estimator=rf,
-    estimatorParamMaps=param_grid,
-    evaluator=evaluator,
-    trainRatio=0.8
-)
-# Fit and predict
+# === TrainValidationSplit ===
+tvs = TrainValidationSplit(estimator=rf, estimatorParamMaps=param_grid, evaluator=rmse_evaluator, trainRatio=0.8)
+tvs_start = time.time()
 tvs_model = tvs.fit(train_data)
+tvs_end = time.time()
+tvs_time = tvs_end - tvs_start
 tvs_predictions = tvs_model.transform(test_data)
-
-
-# COMMAND ----------
-
-#Model Evaluation
-r2_evaluator = RegressionEvaluator(
-    labelCol=label_col,
-    predictionCol="prediction",
-    metricName="r2"
-)
-# RMSE and R2 for CV
-rmse = evaluator.evaluate(predictions)
-r2 = r2_evaluator.evaluate(predictions)
-
-# RMSE and R2 for TVS
-tvs_rmse = evaluator.evaluate(tvs_predictions)
+tvs_rmse = rmse_evaluator.evaluate(tvs_predictions)
 tvs_r2 = r2_evaluator.evaluate(tvs_predictions)
 
-
-# COMMAND ----------
-
-# Fit CrossValidator
-cv_model = cv.fit(train_data)
-
-# ✅ Must assign this
+# === Feature Importances ===
 best_model = cv_model.bestModel
-
-# Now you can safely use:
-print("Best numTrees:", best_model.getNumTrees)
-print("Best maxDepth:", best_model.getOrDefault("maxDepth"))
-
-# COMMAND ----------
-
-#Feature Importance 
 importances = best_model.featureImportances.toArray()
-
-feature_importance_df = pd.DataFrame({
-    "feature": feature_cols,
-    "importance": importances
-}).sort_values(by="importance", ascending=False)
-
+importance_df = pd.DataFrame({"Feature": feature_cols, "Importance": importances}).sort_values(by="Importance", ascending=False)
 print("\n=== Feature Importances ===")
-print(feature_importance_df.to_string(index=False))
-spark_feature_importance_df = spark.createDataFrame(feature_importance_df)
-spark_feature_importance_df.show(truncate=False)
+print(tabulate(importance_df.values.tolist(), headers=["Feature", "Importance"], tablefmt="grid", floatfmt=".6f"))
 
+# Format time
+def format_time(seconds):
+    return str(timedelta(seconds=round(seconds)))
 
-
-
-# COMMAND ----------
-
-#Output Summary in Table Format
-from pyspark.sql import Row
-
-summary_rows = [
-    Row(Stage="Train/Test", Metric="RMSE", Value=float(rmse)),
-    Row(Stage="Train/Test", Metric="R2", Value=float(r2)),
-    Row(Stage="CV", Metric="Training Time (s)", Value=float(end_time - start_time)),
-    Row(Stage="CV", Metric="Best NumTrees", Value=float(best_model.getNumTrees)),
-    Row(Stage="CV", Metric="Best MaxDepth", Value=float(best_model.getOrDefault("maxDepth"))),
-    Row(Stage="TVS", Metric="RMSE", Value=float(tvs_rmse)),
-    Row(Stage="TVS", Metric="R2", Value=float(tvs_r2))
+# === Evaluation Metrics Table ===
+metrics_data = [
+    ["RandomForest (Baseline)", baseline_rmse, baseline_r2, baseline_time, format_time(baseline_time)],
+    ["CrossValidator", cv_rmse, cv_r2, cv_time, format_time(cv_time)],
+    ["TrainValidationSplit", tvs_rmse, tvs_r2, tvs_time, format_time(tvs_time)]
 ]
-spark.createDataFrame(feature_importance_df).show(truncate=False)
-summary_df = spark.createDataFrame(summary_rows)
-summary_df.show(truncate=False)
+print("\n=== Evaluation Metrics ===")
+print(tabulate(metrics_data, headers=["Model", "RMSE", "R²", "Training Time (s)", "Formatted Time"], tablefmt="grid", floatfmt=".4f"))
 
+# === Best Hyperparameters ===
+print("\n=== Best Hyperparameters from CrossValidator ===")
+if hasattr(best_model, "getNumTrees"):
+    print(f"Best numTrees: {best_model.getNumTrees}")
+if best_model.getOrDefault("maxDepth") is not None:
+    print(f"Best maxDepth: {best_model.getOrDefault('maxDepth')}")
 
+# === Completeness Table ===
+completeness_data = [
+    ["RandomForest (Baseline)", "Completed", f"{baseline_rmse:.4f}", f"{baseline_r2:.4f}", format_time(baseline_time)],
+    ["CrossValidator", "Completed", f"{cv_rmse:.4f}", f"{cv_r2:.4f}", format_time(cv_time)],
+    ["TrainValidationSplit", "Completed", f"{tvs_rmse:.4f}", f"{tvs_r2:.4f}", format_time(tvs_time)]
+]
+print("\n=== Completeness of Modeling, Training, Testing, Evaluation ===")
+print(tabulate(completeness_data, headers=["Stage", "Status", "RMSE", "R²", "Training Time"], tablefmt="grid"))
